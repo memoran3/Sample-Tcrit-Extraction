@@ -1,0 +1,160 @@
+---
+title: "Tcrit Sample Code"
+author: "Madeline Moran"
+output: html_notebook
+---
+
+
+This code extracts the Tcrit and error values from FluorCam and TR2000 thermoregulator data. The raw data saved from these instruments are automatically set up with a time stamp in column 1, temperature in column 2, and every column after that is the F0 data for an individual leaf disk sample, as seen with samples S1-S45 in columns 3-47 for this example. The TR2000 heated the samples in wells filled with 0.9 ml of distilled water each between 30 and 60 degrees C over the course of one hour. Please see the manuscript for further details on methods and results.
+
+
+```{r load libraries}
+
+library(segmented)
+library(scales)
+
+```
+
+
+```{r x_rescale function}
+
+x_rescale <- function(x){
+  
+  # Function that takes in a single columns from a data frame and normalizes it between 0 and 1
+  # Arguments: One column of F0 data
+  # Returns: A vector of normalized data
+  
+  as.vector(rescale(x, to = c(0,1), from = range(x, na.rm = T)))
+}
+
+```
+
+
+```{r Folder and pathway set-up}
+
+folder <- "/Users/madel/Desktop/Tcrit Sample Code/"
+setwd(folder)
+
+paths <- list.files(folder, pattern = "*F0.csv", full.names = T)
+
+```
+
+
+```{r Normalize F0 data}
+
+for (x in 1:length(paths)){
+  
+  # Reading in the fluorescence data
+  df <- read.csv(paths[x], header = T)
+  
+  # Setting up empty data frame for the normalized data
+  norm <- data.frame(matrix(NA, nrow(df), ncol(df)), stringsAsFactors = F)
+  colnames(norm) <- colnames(df)
+  norm[,1:2] <- df[,1:2]
+  
+  
+  for (c in 3:ncol(df)){
+    
+    # Re-scaling the fluorescence data to fall between 0 (minimum F0) and 1 (maximum F0)
+    norm[,c] <- x_rescale(df[,c])
+  }
+}
+
+```
+
+
+```{r Tcrit extraction and visuals}
+
+# Creating a new directory for processed data to be saved if one does not already exist
+if(!dir.exists("Processed Data/")){
+  dir.create("Processed Data/")
+}
+
+
+# Setting up the final output table
+output <- data.frame(matrix(NA, (ncol(df)-2),3), stringsAsFactors = F)
+colnames(output) <- c("Sample", "Tcrit", "Tcrit.error")
+output$Sample <- colnames(norm[,-1:-2])
+
+
+# Identifying the high/low limits of the data and determining the range that should be used to fit the segmented regression model; all in degrees C
+deg.min <- 30
+deg.max <- 60
+prebuffer <- 12
+postbuffer <- 1
+
+
+# Segmented regression and extracting Tcrit
+for (i in 3:ncol(norm)){
+  
+  # Location of the maximum fluorescence value
+  max.F0 <- which.max(norm[,i])
+  
+  # Maximum temperature associated with max.F0
+  max.temp <- norm$degC[max.F0]
+  
+  # Location of the row that is closest to 50% electric transport capacity/T50
+  val.50 <- as.numeric(which(abs(subset(norm, norm$degC < max.temp)[,i]-0.5) == min(abs(subset(norm, norm$degC < max.temp)[,i]-0.5))))
+  
+  # Temperature at val.50
+  temp.50 <- norm$degC[val.50][1]
+  
+  # Location of the first row that's greater than or equal to val.50
+  thresh.50 <- which(norm[,i] >= norm[val.50,i])[1]
+  
+  # Temperature that includes the T50 threshold
+  temp.thresh.50 <- norm$degC[thresh.50] + postbuffer
+  
+  # Subset the data for breakpoint regression
+  norm.sub <- subset(norm, degC > deg.min & degC < temp.thresh.50 & degC > (temp.50 - prebuffer))
+  
+  # Breakpoint regression to find Tcrit
+  response <- norm.sub[,i]
+  model <- lm(response ~ degC, data = norm.sub)
+  seg.model <- segmented(model, seg.Z = ~ degC, npsi = 1, data = norm.sub)
+  fit.val <- fitted(seg.model)
+  
+  # Data frame of Tcrit values used for plotting
+  breakpoint <- data.frame(Temperature = norm.sub$degC, norm.sub = fit.val)
+  
+  
+  # Entering Tcrit and Tcrit error values into a data frame
+  tcrit <- round(seg.model$psi[[2]], 2)
+  output$Tcrit[i-2] <- tcrit
+  tcrit.err <- round(seg.model$psi[[3]], 2)
+  output$Tcrit.error[i-2] <- tcrit.err
+  
+  
+  # Creating a legend for the plots below
+  tcrit.legend <- paste0("Tcrit = ", tcrit, " °C")
+  
+  # Creating visuals for the Tcrit data
+  png(filename = paste0(folder,"Processed Data/",colnames(norm)[i],"-F0.png"), width = 800, height = 500, units = "px")
+  
+  plot(norm[,i] ~ norm$degC, type = "l", ylab = expression("F"[0]), xlab = "Temperature (°C)", xlim = c(deg.min,deg.max), ylim = c(0,1), main = paste0(colnames(norm)[i]," minimum chlorophyll fluorescence"))
+  
+  segments(temp.50 - prebuffer, 0, temp.50 - prebuffer, 1, lwd = 2, lty = 3, col = "blue")
+  
+  segments(temp.thresh.50, 0, temp.thresh.50, 1, lwd = 2, lty = 3, col = "blue")
+  
+  lines(norm[,i] ~ degC, data = norm, lwd = 4)
+  
+  lines(norm.sub ~ Temperature, data = breakpoint, type = "l", col = "red", lwd = 4)
+  
+  points(norm.sub[which.min(abs(norm.sub$degC - tcrit)), i] ~ tcrit, pch = 21, lwd = 2, bg = "yellow", cex = 3)
+  
+  legend("top", legend = tcrit.legend, pt.bg = "yellow", pch = 21, bty = "n", cex = 1.5)
+  
+  dev.off()
+
+}
+
+```
+Note: The Tcrit point does not always line up perfectly with the red segmented lines, that is totally fine. This happens because the Tcrit point is situated on the black temperature-F0 line, and will still match the temperature that is visually represented by the breakpoint in the red segment lines.
+
+
+```{r Saving the Tcrit output file}
+
+write.csv(output, file = paste0(folder,"Processed Data/Example_Tcrit.csv"), row.names = F)
+
+```
