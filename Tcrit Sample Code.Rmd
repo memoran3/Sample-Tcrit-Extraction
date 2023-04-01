@@ -131,7 +131,13 @@ for (i in 3:ncol(norm)){
   # Creating visuals for the Tcrit data
   png(filename = paste0(folder,"Processed Data/",colnames(norm)[i],"-F0.png"), width = 800, height = 500, units = "px")
   
-  plot(norm[,i] ~ norm$degC, type = "l", ylab = expression("F"[0]), xlab = "Temperature (°C)", xlim = c(deg.min,deg.max), ylim = c(0,1), main = paste0(colnames(norm)[i]," minimum chlorophyll fluorescence"))
+  plot(norm[,i] ~ norm$degC, 
+       type = "l", 
+       ylab = expression("F"[0]), 
+       xlab = "Temperature (°C)", 
+       xlim = c(deg.min,deg.max), 
+       ylim = c(0,1), 
+       main = paste0(colnames(norm)[i]," minimum chlorophyll fluorescence"))
   
   segments(temp.50 - prebuffer, 0, temp.50 - prebuffer, 1, lwd = 2, lty = 3, col = "blue")
   
